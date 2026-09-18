@@ -24,6 +24,8 @@ class OverviewStats(BaseModel):
     issue_overdue: int = 0
     issue_done_this_month: int = 0
     rectification_rate: float = Field(default=0.0, description="整改完成率（百分比）")
+    renovation_total: int = 0
+    renovation_active: int = Field(default=0, description="进行中的改造项目数")
 
 
 class TrendPoint(BaseModel):

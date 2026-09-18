@@ -6,13 +6,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    ACTIVE_RENOVATION_STATUSES,
     OPEN_ISSUE_STATUSES,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
     RestroomStatus,
 )
-from app.models import Inspection, Issue, Restroom
+from app.models import Inspection, Issue, RenovationProject, Restroom
 from app.schemas.stats import (
     CategoryStat,
     DashboardStats,
@@ -74,6 +75,10 @@ def overview(db: Session) -> OverviewStats:
             db, Issue, Issue.status == IssueStatus.DONE.value, Issue.updated_at >= month_start
         ),
         rectification_rate=round(finished / issue_total * 100, 1) if issue_total else 0.0,
+        renovation_total=_count(db, RenovationProject),
+        renovation_active=_count(
+            db, RenovationProject, RenovationProject.status.in_(ACTIVE_RENOVATION_STATUSES)
+        ),
     )
 
 

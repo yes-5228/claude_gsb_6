@@ -10,9 +10,13 @@ from app.core.constants import (
     INSPECTION_CHECK_ITEMS,
     INSPECTION_ITEM_MAX_SCORE,
     ISSUE_TRANSITIONS,
+    RENOVATION_NODE_NAMES,
+    RENOVATION_TRANSITIONS,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
+    MilestoneConclusion,
+    RenovationStatus,
     RestroomGrade,
     RestroomStatus,
     Shift,
@@ -40,6 +44,10 @@ class Dictionaries(BaseModel):
     inspection_check_items: list[str]
     inspection_item_max_score: int
     issue_transitions: dict[str, list[str]]
+    renovation_status: list[str]
+    renovation_node_names: list[str]
+    milestone_conclusion: list[str]
+    renovation_transitions: dict[str, list[str]]
 
 
 @router.get("/dictionaries", response_model=Dictionaries, summary="枚举字典")
@@ -54,6 +62,12 @@ def get_dictionaries() -> Dictionaries:
         inspection_check_items=list(INSPECTION_CHECK_ITEMS),
         inspection_item_max_score=INSPECTION_ITEM_MAX_SCORE,
         issue_transitions={key: list(value) for key, value in ISSUE_TRANSITIONS.items()},
+        renovation_status=[item.value for item in RenovationStatus],
+        renovation_node_names=list(RENOVATION_NODE_NAMES),
+        milestone_conclusion=[item.value for item in MilestoneConclusion],
+        renovation_transitions={
+            key: list(value) for key, value in RENOVATION_TRANSITIONS.items()
+        },
     )
 
 

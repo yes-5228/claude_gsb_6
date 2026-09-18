@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 
 import { inspectionApi } from '../../api/inspections.js';
 import { issueApi } from '../../api/issues.js';
+import { renovationApi } from '../../api/renovations.js';
 import { restroomApi } from '../../api/restrooms.js';
 import DataTable from '../../components/DataTable.jsx';
 import DetailList from '../../components/DetailList.jsx';
@@ -11,13 +12,15 @@ import Pagination from '../../components/Pagination.jsx';
 import { ScorePill, SeverityTag, StatusTag } from '../../components/Tags.jsx';
 import { useAsync } from '../../hooks/useAsync.js';
 import { useListQuery } from '../../hooks/useListQuery.js';
-import { formatDateTime } from '../../utils/format.js';
+import { formatDate, formatDateTime } from '../../utils/format.js';
+import ProgressBar from '../renovations/ProgressBar.jsx';
 import RestroomFormModal from './RestroomFormModal.jsx';
 
 const TABS = [
   { key: 'profile', label: '基础档案' },
   { key: 'inspections', label: '巡查记录' },
   { key: 'issues', label: '问题记录' },
+  { key: 'renovations', label: '改造项目' },
 ];
 
 export default function RestroomDetailPage() {
@@ -36,6 +39,11 @@ export default function RestroomDetailPage() {
   );
   const issues = useListQuery(
     (params) => issueApi.list({ ...params, restroom_id: restroomId }),
+    {},
+    5,
+  );
+  const renovations = useListQuery(
+    (params) => renovationApi.list({ ...params, restroom_id: restroomId }),
     {},
     5,
   );
@@ -186,6 +194,51 @@ export default function RestroomDetailPage() {
                   ]}
                 />
                 <Pagination meta={issues.meta} onPageChange={issues.setPage} />
+              </section>
+            ) : null}
+
+            {tab === 'renovations' ? (
+              <section className="card">
+                <div className="card-title">
+                  <h3>改造项目</h3>
+                  <Link className="hint" to="/renovations">
+                    前往改造项目模块 →
+                  </Link>
+                </div>
+                <DataTable
+                  loading={renovations.loading}
+                  error={renovations.error}
+                  rows={renovations.items}
+                  emptyText="该公厕暂无改造项目"
+                  columns={[
+                    { key: 'code', title: '项目编号' },
+                    {
+                      key: 'title',
+                      title: '项目名称',
+                      wrap: true,
+                      render: (row) => <Link to={`/renovations/${row.id}`}>{row.title}</Link>,
+                    },
+                    { key: 'contractor', title: '施工单位', wrap: true },
+                    {
+                      key: 'planned',
+                      title: '计划工期',
+                      render: (row) =>
+                        `${formatDate(row.planned_start)} ~ ${formatDate(row.planned_end)}`,
+                    },
+                    { key: 'budget', title: '预算', render: (row) => `${row.budget} 万元` },
+                    {
+                      key: 'progress',
+                      title: '进度',
+                      render: (row) => <ProgressBar value={row.progress} />,
+                    },
+                    {
+                      key: 'status',
+                      title: '状态',
+                      render: (row) => <StatusTag status={row.status} />,
+                    },
+                  ]}
+                />
+                <Pagination meta={renovations.meta} onPageChange={renovations.setPage} />
               </section>
             ) : null}
           </>

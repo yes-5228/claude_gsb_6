@@ -47,8 +47,6 @@ class IssueStatus(StrEnum):
     REVIEWING = "待验收"
     DONE = "已完成"
     CLOSED = "已关闭"
-
-
 # 整改流转规则：当前状态 -> 允许流转到的状态
 ISSUE_TRANSITIONS: dict[str, list[str]] = {
     IssueStatus.PENDING: [IssueStatus.PROCESSING, IssueStatus.CLOSED],
@@ -97,3 +95,61 @@ OPEN_ISSUE_STATUSES: list[str] = [
 
 # 单检查项低于该分数视为不合格项
 INSPECTION_ITEM_PROBLEM_THRESHOLD = 6
+
+
+class RenovationStatus(StrEnum):
+    """改造项目状态。"""
+
+    APPROVED = "已立项"
+    WORKING = "改造中"
+    ACCEPTANCE = "待完工验收"
+    COMPLETED = "已完工"
+    CANCELLED = "已取消"
+
+
+class MilestoneConclusion(StrEnum):
+    """节点/完工验收结论。"""
+
+    PASSED = "通过"
+    CONDITIONAL = "整改后通过"
+    FAILED = "未通过"
+
+
+# 改造项目流转规则：当前状态 -> 允许流转到的状态
+RENOVATION_TRANSITIONS: dict[str, list[str]] = {
+    RenovationStatus.APPROVED: [RenovationStatus.WORKING, RenovationStatus.CANCELLED],
+    RenovationStatus.WORKING: [RenovationStatus.ACCEPTANCE, RenovationStatus.CANCELLED],
+    RenovationStatus.ACCEPTANCE: [RenovationStatus.COMPLETED, RenovationStatus.WORKING],
+    RenovationStatus.COMPLETED: [],
+    RenovationStatus.CANCELLED: [],
+}
+
+# 项目流转对应的动作名称，用于生成项目档案流水
+RENOVATION_TRANSITION_ACTIONS: dict[tuple[str, str], str] = {
+    (RenovationStatus.APPROVED, RenovationStatus.WORKING): "开工",
+    (RenovationStatus.APPROVED, RenovationStatus.CANCELLED): "取消项目",
+    (RenovationStatus.WORKING, RenovationStatus.ACCEPTANCE): "申请完工验收",
+    (RenovationStatus.WORKING, RenovationStatus.CANCELLED): "中止取消",
+    (RenovationStatus.ACCEPTANCE, RenovationStatus.COMPLETED): "完工验收通过",
+    (RenovationStatus.ACCEPTANCE, RenovationStatus.WORKING): "验收退回整改",
+}
+
+# 仍处于改造周期内、占用公厕的项目状态（同一公厕同一时间只允许一个，
+# 也用于工期超期预警：这些状态下计划完工日期已过即视为超期）
+ACTIVE_RENOVATION_STATUSES: list[str] = [
+    RenovationStatus.APPROVED,
+    RenovationStatus.WORKING,
+    RenovationStatus.ACCEPTANCE,
+]
+
+# 常用的改造节点名称，供前端下拉选择
+RENOVATION_NODE_NAMES: list[str] = [
+    "拆除清运",
+    "土建施工",
+    "水电改造",
+    "防水工程",
+    "装饰装修",
+    "设备安装",
+    "环境恢复",
+    "其他",
+]

@@ -850,3 +850,33 @@ table.data-table td.wrap {
     white-space: nowrap;
   }
 }
+
+/* 改造项目进度条 */
+.progress-track {
+  position: relative;
+  width: 110px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+.progress-fill.is-done {
+  background: var(--success);
+}
+
+.progress-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

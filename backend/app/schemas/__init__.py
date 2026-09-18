@@ -15,6 +15,14 @@ from app.schemas.issue import (
     IssueUpdate,
     RectificationRecordOut,
 )
+from app.schemas.renovation import (
+    RenovationCreate,
+    RenovationMilestoneCreate,
+    RenovationMilestoneOut,
+    RenovationOut,
+    RenovationStatusUpdate,
+    RenovationUpdate,
+)
 from app.schemas.restroom import (
     RestroomBrief,
     RestroomCreate,
@@ -43,5 +51,11 @@ __all__ = [
     "IssueUpdate",
     "IssueStatusUpdate",
     "IssueOut",
+    "RenovationCreate",
+    "RenovationUpdate",
+    "RenovationStatusUpdate",
+    "RenovationMilestoneCreate",
+    "RenovationMilestoneOut",
+    "RenovationOut",
     "DashboardStats",
 ]

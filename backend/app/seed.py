@@ -11,6 +11,8 @@ from app.core.constants import (
     IssueCategory,
     IssueSeverity,
     IssueStatus,
+    MilestoneConclusion,
+    RenovationStatus,
     RestroomGrade,
     RestroomStatus,
     Shift,
@@ -18,8 +20,13 @@ from app.core.constants import (
 from app.models import Restroom
 from app.schemas.inspection import InspectionCreate, InspectionItem
 from app.schemas.issue import IssueCreate, IssueStatusUpdate
+from app.schemas.renovation import (
+    RenovationCreate,
+    RenovationMilestoneCreate,
+    RenovationStatusUpdate,
+)
 from app.schemas.restroom import RestroomCreate
-from app.services import inspection_service, issue_service, restroom_service
+from app.services import inspection_service, issue_service, renovation_service, restroom_service
 
 RANDOM_SEED = 20240913
 
@@ -190,6 +197,8 @@ def seed_database(db: Session, *, reset: bool = False) -> int:
         created += 1
         _advance_issue(db, issue.id, age_days, rng)
 
+    _seed_renovations(db, restrooms, now)
+
     return created
 
 
@@ -226,3 +235,113 @@ def _advance_issue(db: Session, issue_id: int, age_days: int, rng: random.Random
             )
         except Exception:  # noqa: BLE001  演示数据允许跳过不合法的流转
             break
+
+
+def _seed_renovations(db: Session, restrooms: list[Restroom], now: datetime) -> None:
+    """写入两个演示改造项目：一个已完工归档，一个改造中（公厕联动停用）。"""
+
+    def backdate(project, days_ago: int, *fields: str) -> None:
+        """把最近一条档案流水及项目时间字段回拨到 days_ago 天前，让演示数据更真实。"""
+        stamp = now - timedelta(days=days_ago)
+        project.milestones[-1].created_at = stamp
+        for field in fields:
+            setattr(project, field, stamp)
+        db.commit()
+        db.refresh(project)
+
+    # 项目一：老城隍庙公厕综合改造，已完工验收，档案完整保留
+    temple = restrooms[8]
+    done = renovation_service.create_project(
+        db,
+        RenovationCreate(
+            restroom_id=temple.id,
+            title="老城隍庙公厕老旧设施综合改造",
+            reason="建厕超过 15 年，洁具老化、排水不畅，群众反映强烈，列入年度民生实事改造计划。",
+            approved_at=now - timedelta(days=90),
+            contractor="市建工集团第三工程公司",
+            planned_start=now - timedelta(days=85),
+            planned_end=now - timedelta(days=22),
+            budget=46.5,
+            remark="改造期间引导市民使用城隍庙街临时公厕",
+        ),
+    )
+    backdate(done, 90)
+    done = renovation_service.change_status(
+        db,
+        done.id,
+        RenovationStatusUpdate(
+            to_status=RenovationStatus.WORKING, operator="项目管理办公室", remark="施工围挡已搭设，正式开工"
+        ),
+    )
+    backdate(done, 85, "started_at")
+    for node, progress, conclusion, days, note in [
+        ("拆除清运", 20, MilestoneConclusion.PASSED, 76, "老旧洁具与隔断拆除完毕，建渣清运完成"),
+        ("土建施工", 45, MilestoneConclusion.PASSED, 64, "墙地面基层处理完成"),
+        ("水电改造", 65, MilestoneConclusion.CONDITIONAL, 52, "给排水管线更换完成，两处接口渗漏已要求返工"),
+        ("装饰装修", 85, MilestoneConclusion.PASSED, 38, "墙地砖铺贴与吊顶完成"),
+        ("设备安装", 100, MilestoneConclusion.PASSED, 28, "感应洁具、无障碍扶手安装调试完成"),
+    ]:
+        done = renovation_service.add_milestone(
+            db,
+            done.id,
+            RenovationMilestoneCreate(
+                node=node, progress=progress, conclusion=conclusion, operator="监理单位", note=note
+            ),
+        )
+        backdate(done, days)
+    done = renovation_service.change_status(
+        db,
+        done.id,
+        RenovationStatusUpdate(
+            to_status=RenovationStatus.ACCEPTANCE, operator="市建工集团第三工程公司", remark="合同范围内工程全部完成，申请完工验收"
+        ),
+    )
+    backdate(done, 24)
+    done = renovation_service.change_status(
+        db,
+        done.id,
+        RenovationStatusUpdate(
+            to_status=RenovationStatus.COMPLETED,
+            operator="环卫所验收组",
+            conclusion=MilestoneConclusion.PASSED,
+            remark="现场验收合格，公厕恢复开放",
+        ),
+    )
+    backdate(done, 20, "finished_at")
+
+    # 项目二：第三小学旁公厕无障碍提升改造，改造中，公厕联动停用
+    school = restrooms[9]
+    working = renovation_service.create_project(
+        db,
+        RenovationCreate(
+            restroom_id=school.id,
+            title="第三小学旁公厕无障碍设施提升改造",
+            reason="缺少无障碍通道与扶手，上下学高峰使用不便，家长多次投诉。",
+            approved_at=now - timedelta(days=25),
+            contractor="新城市政园林工程有限公司",
+            planned_start=now - timedelta(days=20),
+            planned_end=now + timedelta(days=10),
+            budget=18.8,
+        ),
+    )
+    backdate(working, 25)
+    working = renovation_service.change_status(
+        db,
+        working.id,
+        RenovationStatusUpdate(
+            to_status=RenovationStatus.WORKING, operator="项目管理办公室", remark="进场施工，公厕暂停使用"
+        ),
+    )
+    backdate(working, 20, "started_at")
+    for node, progress, conclusion, days, note in [
+        ("拆除清运", 30, MilestoneConclusion.PASSED, 15, "原有台阶与旧洁具拆除完成"),
+        ("土建施工", 55, MilestoneConclusion.CONDITIONAL, 6, "无障碍坡道浇筑完成，坡度复测合格后进入下一工序"),
+    ]:
+        working = renovation_service.add_milestone(
+            db,
+            working.id,
+            RenovationMilestoneCreate(
+                node=node, progress=progress, conclusion=conclusion, operator="监理单位", note=note
+            ),
+        )
+        backdate(working, days)

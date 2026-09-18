@@ -11,6 +11,10 @@ def test_health_and_dictionaries(client):
     assert "待整改" in payload["issue_status"]
     assert len(payload["inspection_check_items"]) == 8
     assert payload["issue_transitions"]["待整改"] == ["整改中", "已关闭"]
+    assert "改造中" in payload["renovation_status"]
+    assert "拆除清运" in payload["renovation_node_names"]
+    assert payload["milestone_conclusion"] == ["通过", "整改后通过", "未通过"]
+    assert payload["renovation_transitions"]["已立项"] == ["改造中", "已取消"]
 
 
 def test_restroom_crud_and_delete_guard(client, restroom):
@@ -223,3 +227,182 @@ def test_dashboard_stats(client, restroom):
     }
     assert payload["top_restrooms"]
     assert "rectification_rate" in overview
+    assert "renovation_active" in overview
+
+
+def _renovation_payload(restroom_id: int, **overrides) -> dict:
+    payload = {
+        "restroom_id": restroom_id,
+        "title": "无障碍设施提升改造",
+        "reason": "设施老化，无障碍通道缺失，群众反映强烈",
+        "contractor": "市政工程一公司",
+        "planned_start": datetime.now().isoformat(),
+        "planned_end": (datetime.now() + timedelta(days=30)).isoformat(),
+        "budget": 25.6,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_renovation_lifecycle(client, restroom):
+    # 立项登记：改造事由、立项时间、施工单位、计划工期与预算
+    project = client.post(
+        "/api/v1/renovations", json=_renovation_payload(restroom["id"])
+    ).json()
+    assert project["status"] == "已立项"
+    assert project["code"].startswith("GZ-")
+    assert project["progress"] == 0
+    assert project["milestones"][0]["node"] == "项目立项"
+
+    # 立项阶段公厕状态不变
+    detail = client.get(f"/api/v1/restrooms/{restroom['id']}").json()
+    assert detail["status"] == "正常开放"
+
+    # 计划完工早于计划开工会被拒绝
+    bad_schedule = client.post(
+        "/api/v1/renovations",
+        json=_renovation_payload(
+            restroom["id"],
+            planned_start=datetime.now().isoformat(),
+            planned_end=(datetime.now() - timedelta(days=1)).isoformat(),
+        ),
+    )
+    assert bad_schedule.status_code == 422
+
+    # 越级流转被拒绝：已立项 -> 已完工
+    invalid = client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "已完工", "operator": "验收组"},
+    )
+    assert invalid.status_code == 400
+    assert "不允许流转" in invalid.json()["detail"]
+
+    options = client.get(f"/api/v1/renovations/{project['id']}/transitions").json()
+    assert {option["status"] for option in options} == {"改造中", "已取消"}
+
+    # 开工：改造期间公厕自动转为停用
+    started = client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "改造中", "operator": "项目部", "remark": "进场施工"},
+    ).json()
+    assert started["status"] == "改造中"
+    assert started["started_at"] is not None
+    detail = client.get(f"/api/v1/restrooms/{restroom['id']}").json()
+    assert detail["status"] == "暂停使用"
+
+    # 同一公厕不允许重复立项
+    duplicate = client.post("/api/v1/renovations", json=_renovation_payload(restroom["id"]))
+    assert duplicate.status_code == 409
+
+    # 按节点记录进度与阶段验收结论
+    first = client.post(
+        f"/api/v1/renovations/{project['id']}/milestones",
+        json={
+            "node": "拆除清运",
+            "progress": 30,
+            "conclusion": "通过",
+            "operator": "监理单位",
+            "note": "旧洁具拆除完毕",
+        },
+    ).json()
+    assert first["progress"] == 30
+    second = client.post(
+        f"/api/v1/renovations/{project['id']}/milestones",
+        json={"node": "土建施工", "progress": 60, "conclusion": "整改后通过", "operator": "监理单位"},
+    ).json()
+    assert second["progress"] == 60
+    node_records = [m for m in second["milestones"] if m["kind"] == "节点进度"]
+    assert [m["node"] for m in node_records] == ["拆除清运", "土建施工"]
+    assert node_records[1]["conclusion"] == "整改后通过"
+
+    # 申请完工验收 -> 验收退回 -> 再次申请 -> 完工验收通过
+    client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "待完工验收", "operator": "施工单位"},
+    )
+    returned = client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "改造中", "operator": "验收组", "remark": "两处细节需整改"},
+    ).json()
+    assert returned["status"] == "改造中"
+    # 退回整改期间公厕仍处于停用状态
+    detail = client.get(f"/api/v1/restrooms/{restroom['id']}").json()
+    assert detail["status"] == "暂停使用"
+
+    client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "待完工验收", "operator": "施工单位"},
+    )
+    done = client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={
+            "to_status": "已完工",
+            "operator": "验收组",
+            "conclusion": "通过",
+            "remark": "现场验收合格",
+        },
+    ).json()
+    assert done["status"] == "已完工"
+    assert done["progress"] == 100
+    assert done["completion_conclusion"] == "通过"
+    assert done["finished_at"] is not None
+
+    # 完工验收后公厕恢复开放
+    detail = client.get(f"/api/v1/restrooms/{restroom['id']}").json()
+    assert detail["status"] == "正常开放"
+
+    # 已完工项目归档：不允许再修改、再记节点
+    blocked_edit = client.patch(
+        f"/api/v1/renovations/{project['id']}", json={"budget": 30}
+    )
+    assert blocked_edit.status_code == 400
+    blocked_node = client.post(
+        f"/api/v1/renovations/{project['id']}/milestones",
+        json={"node": "其他", "progress": 100, "operator": "监理单位"},
+    )
+    assert blocked_node.status_code == 400
+
+    # 整份项目档案保留：立项、开工、节点、验收记录完整可查
+    archive = client.get(f"/api/v1/renovations/{project['id']}").json()
+    flow_nodes = [m["node"] for m in archive["milestones"] if m["kind"] == "流程事件"]
+    assert flow_nodes == ["项目立项", "开工", "申请完工验收", "验收退回整改", "申请完工验收", "完工验收通过"]
+    completion = archive["milestones"][-1]
+    assert completion["conclusion"] == "通过"
+    assert completion["operator"] == "验收组"
+
+
+def test_renovation_cancel_restores_restroom(client, restroom):
+    project = client.post(
+        "/api/v1/renovations", json=_renovation_payload(restroom["id"])
+    ).json()
+    client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "改造中", "operator": "项目部"},
+    )
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "暂停使用"
+
+    cancelled = client.post(
+        f"/api/v1/renovations/{project['id']}/transitions",
+        json={"to_status": "已取消", "operator": "项目管理办公室", "remark": "资金未落实，暂缓实施"},
+    ).json()
+    assert cancelled["status"] == "已取消"
+    # 取消后公厕恢复为改造前状态
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "正常开放"
+    # 取消后可重新立项
+    again = client.post("/api/v1/renovations", json=_renovation_payload(restroom["id"]))
+    assert again.status_code == 201
+
+
+def test_renovation_list_filters(client, restroom):
+    client.post("/api/v1/renovations", json=_renovation_payload(restroom["id"]))
+    listed = client.get(
+        "/api/v1/renovations", params={"restroom_id": restroom["id"], "status": "已立项"}
+    ).json()
+    assert listed["meta"]["total"] == 1
+    assert listed["items"][0]["restroom"]["name"] == restroom["name"]
+
+    by_keyword = client.get("/api/v1/renovations", params={"keyword": "无障碍"}).json()
+    assert by_keyword["meta"]["total"] >= 1
+
+    by_district = client.get("/api/v1/renovations", params={"district": "测试区"}).json()
+    assert by_district["meta"]["total"] >= 1

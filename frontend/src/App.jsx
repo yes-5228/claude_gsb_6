@@ -5,6 +5,8 @@ import DashboardPage from './pages/dashboard/DashboardPage.jsx';
 import InspectionListPage from './pages/inspections/InspectionListPage.jsx';
 import IssueDetailPage from './pages/issues/IssueDetailPage.jsx';
 import IssueListPage from './pages/issues/IssueListPage.jsx';
+import RenovationDetailPage from './pages/renovations/RenovationDetailPage.jsx';
+import RenovationListPage from './pages/renovations/RenovationListPage.jsx';
 import RestroomDetailPage from './pages/restrooms/RestroomDetailPage.jsx';
 import RestroomListPage from './pages/restrooms/RestroomListPage.jsx';
 
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/inspections" element={<InspectionListPage />} />
         <Route path="/issues" element={<IssueListPage />} />
         <Route path="/issues/:issueId" element={<IssueDetailPage />} />
+        <Route path="/renovations" element={<RenovationListPage />} />
+        <Route path="/renovations/:projectId" element={<RenovationDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
