@@ -41,9 +41,21 @@ export const STATUS_TONES = {
   待验收: 'tag-info',
   已完成: 'tag-success',
   已关闭: 'tag-neutral',
+  待施工: 'tag-neutral',
+  施工中: 'tag-warning',
+  已验收: 'tag-success',
   正常: 'tag-success',
   发现问题: 'tag-danger',
 };
+
+export const ACCEPTANCE_TONES = {
+  合格: 'tag-success',
+  不合格: 'tag-danger',
+};
+
+export function acceptanceTone(result) {
+  return ACCEPTANCE_TONES[result] || 'tag-neutral';
+}
 
 export const SEVERITY_TONES = {
   一般: 'tag-neutral',

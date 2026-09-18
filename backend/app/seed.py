@@ -11,6 +11,8 @@ from app.core.constants import (
     IssueCategory,
     IssueSeverity,
     IssueStatus,
+    NodeAcceptance,
+    RenovationStatus,
     RestroomGrade,
     RestroomStatus,
     Shift,
@@ -18,8 +20,14 @@ from app.core.constants import (
 from app.models import Restroom
 from app.schemas.inspection import InspectionCreate, InspectionItem
 from app.schemas.issue import IssueCreate, IssueStatusUpdate
+from app.schemas.renovation import (
+    RenovationNodeAcceptance,
+    RenovationNodeCreate,
+    RenovationProjectCreate,
+    RenovationStatusUpdate,
+)
 from app.schemas.restroom import RestroomCreate
-from app.services import inspection_service, issue_service, restroom_service
+from app.services import inspection_service, issue_service, renovation_service, restroom_service
 
 RANDOM_SEED = 20240913
 
@@ -190,6 +198,8 @@ def seed_database(db: Session, *, reset: bool = False) -> int:
         created += 1
         _advance_issue(db, issue.id, age_days, rng)
 
+    seed_renovations(db, restrooms)
+
     return created
 
 
@@ -226,3 +236,113 @@ def _advance_issue(db: Session, issue_id: int, age_days: int, rng: random.Random
             )
         except Exception:  # noqa: BLE001  演示数据允许跳过不合法的流转
             break
+
+
+# (公厕序号, 施工单位, 现场负责人, 事由, 预算万元, 计划开工偏移天, 计划完工偏移天)
+def seed_renovations(db: Session, restrooms: list) -> None:
+    """写入 4 个不同阶段的改造项目，演示立项停用、节点验收、完工恢复与档案封存。"""
+    rng = random.Random(RANDOM_SEED + 1)
+    now = datetime.now()
+
+    def d(offset: int) -> datetime:
+        return now + timedelta(days=offset)
+
+    def setup(idx: int, unit: str, manager: str, reason: str, budget: float,
+              start_offset: int, end_offset: int, *, phone: str = ""):
+        return renovation_service.create_project(
+            db,
+            RenovationProjectCreate(
+                restroom_id=restrooms[idx].id,
+                reason=reason,
+                construction_unit=unit,
+                project_manager=manager,
+                contact_phone=phone or f"13{rng.randint(100000000, 999999999)}",
+                setup_time=d(start_offset - 2),
+                planned_start_date=(now + timedelta(days=start_offset)).date(),
+                planned_end_date=(now + timedelta(days=end_offset)).date(),
+                budget=budget,
+            ),
+        )
+
+    def transition(project_id: int, target: RenovationStatus, operator: str, remark: str,
+                   actual_cost: float | None = None) -> None:
+        renovation_service.change_status(
+            db,
+            project_id,
+            RenovationStatusUpdate(
+                to_status=target, operator=operator, remark=remark, actual_cost=actual_cost
+            ),
+        )
+
+    def node(project_id: int, title: str, offset: int, percent: int, operator: str,
+             progress: str, accept: tuple[NodeAcceptance, str, str] | None = None) -> None:
+        project = renovation_service.add_node(
+            db,
+            project_id,
+            RenovationNodeCreate(
+                title=title,
+                node_date=(now + timedelta(days=offset)).date(),
+                progress=progress,
+                progress_percent=percent,
+                operator=operator,
+            ),
+        )
+        if accept is not None:
+            result, opinion, acceptor = accept
+            renovation_service.accept_node(
+                db,
+                project_id,
+                project.nodes[-1].id,
+                RenovationNodeAcceptance(result=result, opinion=opinion, acceptor=acceptor),
+            )
+
+    # 1) 人民广场公厕：60 天前立项，已竣工验收，公厕恢复正常开放（档案封存）
+    p1 = setup(
+        0, "城央建设工程有限公司", "林建华",
+        "设施老化、给排水系统渗漏，按一类公厕标准整体提档升级，增设第三卫生间与母婴设施。",
+        28.5, -58, -3,
+    )
+    transition(p1.id, RenovationStatus.PROCESSING, "林建华", "施工队进场，围挡封闭，公厕暂停使用")
+    node(p1.id, "拆除与垃圾清运", -55, 100, "林建华", "旧洁具、隔断拆除完毕，建筑垃圾当日清运。",
+         (NodeAcceptance.PASS, "拆除到位，现场安全文明施工达标。", "甲方代表周科"))
+    node(p1.id, "水电管线改造", -42, 100, "林建华", "给排水管线、强弱电桥架全部更换并完成试压。",
+         (NodeAcceptance.PASS, "试压合格，管线走向规范。", "监理吴工"))
+    node(p1.id, "装饰装修", -22, 100, "林建华", "墙地砖铺贴、吊顶与隔断安装完成。",
+         (NodeAcceptance.PASS, "平整度与空鼓检查合格。", "监理吴工"))
+    node(p1.id, "洁具设备安装", -8, 100, "林建华", "感应洁具、新风系统、第三卫生间设施安装调试完成。",
+         (NodeAcceptance.PASS, "设备运行正常，无障碍设施齐备。", "甲方代表周科"))
+    transition(p1.id, RenovationStatus.REVIEWING, "林建华", "全部工程完工，申请竣工验收")
+    transition(p1.id, RenovationStatus.ACCEPTED, "验收组周科",
+               "竣工验收通过，工程质量合格，资料齐全，同意恢复开放。", actual_cost=26.8)
+
+    # 2) 滨江公园公厕：施工中且已超过计划完工日期（演示工期超期），公厕停用
+    p2 = setup(
+        1, "绿苑市政工程公司", "高志远",
+        "通风除臭效果差、洁具锈蚀，更换节能洁具并改造排风系统。",
+        12.0, -25, -2,
+    )
+    transition(p2.id, RenovationStatus.PROCESSING, "高志远", "正式开工，现场封闭施工")
+    node(p2.id, "拆除与管线探查", -23, 100, "高志远", "旧洁具拆除，地下管线探查完成。",
+         (NodeAcceptance.PASS, "符合要求。", "监理吴工"))
+    node(p2.id, "排风系统改造", -10, 70, "高志远", "新风机组已安装，风管安装进行中，因定制风管到货延迟工期顺延。",
+         (NodeAcceptance.FAIL, "部分风管支吊架间距偏大，要求整改后复验。", "监理吴工"))
+
+    # 3) 老城区第三小学旁公厕：原本即暂停使用，立项待施工（立项前状态被保存）
+    setup(
+        9, "老城区修缮队", "马德福",
+        "屋面漏雨、墙面霉变，趁停用期间进行防水修缮与内墙翻新。",
+        6.8, 2, 20,
+    )
+
+    # 4) 西城集贸市场公厕：已完工报验，等待竣工验收，公厕停用
+    p4 = setup(
+        4, "城央建设工程有限公司", "宋海峰",
+        "人流量大导致地面排水不畅、蹲位不足，扩建蹲位并重做地面排水。",
+        15.2, -30, -1,
+    )
+    transition(p4.id, RenovationStatus.PROCESSING, "宋海峰", "开工施工")
+    node(p4.id, "地面破除与排水重做", -26, 100, "宋海峰", "排水沟重做、地面找坡完成。",
+         (NodeAcceptance.PASS, "排水通畅，坡度符合设计。", "监理吴工"))
+    node(p4.id, "隔断扩建与洁具安装", -8, 100, "宋海峰", "新增 2 个蹲位，洁具安装调试完成。",
+         (NodeAcceptance.PASS, "安装牢固，试水无渗漏。", "甲方代表周科"))
+    transition(p4.id, RenovationStatus.REVIEWING, "宋海峰", "工程完工，报验竣工验收")

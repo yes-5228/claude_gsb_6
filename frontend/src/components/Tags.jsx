@@ -1,7 +1,12 @@
-import { isOverdue, scoreTone, severityTone, statusTone } from '../utils/format.js';
+import { acceptanceTone, isOverdue, scoreTone, severityTone, statusTone } from '../utils/format.js';
 
 export function StatusTag({ status }) {
   return <span className={`tag ${statusTone(status)}`}>{status}</span>;
+}
+
+export function AcceptanceTag({ result }) {
+  if (!result) return <span className="tag tag-neutral">未验收</span>;
+  return <span className={`tag ${acceptanceTone(result)}`}>{result}</span>;
 }
 
 export function SeverityTag({ severity }) {

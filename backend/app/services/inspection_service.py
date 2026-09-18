@@ -5,6 +5,7 @@ from datetime import date, datetime, time
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.constants import RestroomStatus
 from app.core.exceptions import DomainError, NotFoundError
 from app.models import Inspection, Restroom
 from app.schemas.inspection import InspectionCreate, InspectionOut, InspectionUpdate
@@ -101,7 +102,9 @@ def list_inspections(
 
 
 def create_inspection(db: Session, payload: InspectionCreate) -> Inspection:
-    restroom_service.get_restroom(db, payload.restroom_id)
+    restroom = restroom_service.get_restroom(db, payload.restroom_id)
+    if restroom.status == RestroomStatus.CLOSED.value:
+        raise DomainError("该公厕已暂停使用（改造中），无法登记巡查")
     items = _normalize_items(payload.items)
     score, grade, result = scoring.evaluate(items)
     inspection = Inspection(

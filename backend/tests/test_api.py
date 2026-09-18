@@ -223,3 +223,215 @@ def test_dashboard_stats(client, restroom):
     }
     assert payload["top_restrooms"]
     assert "rectification_rate" in overview
+    assert "renovation_active" in overview
+
+
+def _project_payload(restroom_id: int, **overrides) -> dict:
+    payload = {
+        "restroom_id": restroom_id,
+        "reason": "给排水老化渗漏，整体提档改造",
+        "construction_unit": "城央建设工程有限公司",
+        "project_manager": "林工",
+        "contact_phone": "13800000000",
+        "planned_start_date": "2026-10-01",
+        "planned_end_date": "2026-11-15",
+        "budget": 20.5,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_renovation_lifecycle_and_restroom_status(client, restroom):
+    # 立项即停用，公厕状态变为暂停使用并记录原状态
+    project = client.post("/api/v1/projects", json=_project_payload(restroom["id"])).json()
+    assert project["code"].startswith("GZ-")
+    assert project["status"] == "待施工"
+    assert project["previous_restroom_status"] == "正常开放"
+    assert project["plan_duration_days"] == 46
+    assert project["records"][0]["action"] == "立项登记"
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "暂停使用"
+
+    # 停用期间不能登记巡查
+    blocked_inspection = client.post(
+        "/api/v1/inspections",
+        json={"restroom_id": restroom["id"], "inspector": "测试巡查员", "items": full_items(9)},
+    )
+    assert blocked_inspection.status_code == 400
+    assert "暂停使用" in blocked_inspection.json()["detail"]
+
+    # 同一公厕不能重复立项
+    duplicate = client.post("/api/v1/projects", json=_project_payload(restroom["id"]))
+    assert duplicate.status_code == 400
+    assert "不能重复立项" in duplicate.json()["detail"]
+
+    # 计划完工早于开工返回 422
+    bad_dates = client.post(
+        "/api/v1/projects",
+        json=_project_payload(restroom["id"], planned_end_date="2026-09-01"),
+    )
+    assert bad_dates.status_code == 422
+
+    # 待施工不能登记进度节点，也不能越级竣工验收
+    node_early = client.post(
+        f"/api/v1/projects/{project['id']}/nodes",
+        json={"title": "拆除", "node_date": "2026-10-02", "operator": "林工"},
+    )
+    assert node_early.status_code == 400
+    jump = client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={"to_status": "已验收", "operator": "林工"},
+    )
+    assert jump.status_code == 400
+    assert "不允许流转" in jump.json()["detail"]
+
+    options = client.get(f"/api/v1/projects/{project['id']}/transitions").json()
+    assert [item["status"] for item in options] == ["施工中"]
+
+    # 开工：写入实际开工时间
+    processing = client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={"to_status": "施工中", "operator": "林工", "remark": "进场施工"},
+    ).json()
+    assert processing["status"] == "施工中"
+    assert processing["actual_start_time"] is not None
+
+    # 登记两个节点并做阶段验收（合格、不合格各一次）
+    detail = client.post(
+        f"/api/v1/projects/{project['id']}/nodes",
+        json={
+            "title": "水电管线改造",
+            "node_date": "2026-10-10",
+            "progress": "管线更换完成并试压",
+            "progress_percent": 45,
+            "operator": "林工",
+        },
+    ).json()
+    node_id = detail["nodes"][0]["id"]
+    failed = client.patch(
+        f"/api/v1/projects/{project['id']}/nodes/{node_id}",
+        json={"result": "不合格", "opinion": "支吊架间距偏大", "acceptor": "监理吴工"},
+    ).json()
+    assert failed["nodes"][0]["acceptance_result"] == "不合格"
+    passed = client.patch(
+        f"/api/v1/projects/{project['id']}/nodes/{node_id}",
+        json={"result": "合格", "opinion": "整改后复验通过", "acceptor": "监理吴工"},
+    ).json()
+    assert passed["nodes"][0]["acceptance_result"] == "合格"
+    assert passed["nodes"][0]["acceptor"] == "监理吴工"
+
+    client.post(
+        f"/api/v1/projects/{project['id']}/nodes",
+        json={"title": "洁具安装", "node_date": "2026-11-10", "progress_percent": 95, "operator": "林工"},
+    )
+
+    # 完工报验 -> 验收驳回回施工中 -> 再报验 -> 竣工验收通过，公厕恢复
+    reviewing = client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={"to_status": "待验收", "operator": "林工", "remark": "完工报验"},
+    ).json()
+    assert reviewing["status"] == "待验收"
+    # 待验收阶段不可新增节点
+    node_late = client.post(
+        f"/api/v1/projects/{project['id']}/nodes",
+        json={"title": "额外节点", "node_date": "2026-11-12", "operator": "林工"},
+    )
+    assert node_late.status_code == 400
+
+    rejected = client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={"to_status": "施工中", "operator": "验收组", "remark": "排风仍需调试"},
+    ).json()
+    assert rejected["status"] == "施工中"
+    client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={"to_status": "待验收", "operator": "林工", "remark": "整改完成再报验"},
+    )
+    accepted = client.post(
+        f"/api/v1/projects/{project['id']}/transitions",
+        json={
+            "to_status": "已验收",
+            "operator": "验收组周科",
+            "remark": "竣工验收通过，资料齐全",
+            "actual_cost": 19.8,
+        },
+    ).json()
+    assert accepted["status"] == "已验收"
+    assert accepted["accepted_at"] is not None
+    assert accepted["accepted_opinion"] == "竣工验收通过，资料齐全"
+    assert accepted["actual_cost"] == 19.8
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "正常开放"
+
+    # 封存后写操作全部拒绝
+    assert client.patch(f"/api/v1/projects/{project['id']}", json={"budget": 21}).status_code == 400
+    assert (
+        client.post(
+            f"/api/v1/projects/{project['id']}/transitions",
+            json={"to_status": "施工中", "operator": "林工"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            f"/api/v1/projects/{project['id']}/nodes/{node_id}",
+            json={"result": "合格", "acceptor": "吴工"},
+        ).status_code
+        == 400
+    )
+    assert client.delete(f"/api/v1/projects/{project['id']}").status_code == 400
+
+
+def test_renovation_delete_restores_restroom_and_filters(client, restroom):
+    project = client.post(
+        "/api/v1/projects",
+        json=_project_payload(
+            restroom["id"], planned_start_date="2026-01-01", planned_end_date="2026-02-01"
+        ),
+    ).json()
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "暂停使用"
+
+    # 删除进行中的项目，公厕恢复开放
+    deleted = client.delete(f"/api/v1/projects/{project['id']}")
+    assert deleted.status_code == 200
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "正常开放"
+
+    # 再建一个进行中项目验证过滤：工期超期 + 仅进行中 + 状态
+    current = client.post(
+        "/api/v1/projects",
+        json=_project_payload(
+            restroom["id"], planned_start_date="2026-01-01", planned_end_date="2026-02-01"
+        ),
+    ).json()
+    delayed = client.get("/api/v1/projects", params={"delayed": "true"}).json()
+    assert delayed["meta"]["total"] == 1
+    assert delayed["items"][0]["id"] == current["id"]
+    assert delayed["items"][0]["is_delayed"] is True
+
+    open_only = client.get("/api/v1/projects", params={"open_only": "true"}).json()
+    assert any(item["id"] == current["id"] for item in open_only["items"])
+    by_status = client.get("/api/v1/projects", params={"status": "待施工"}).json()
+    assert any(item["id"] == current["id"] for item in by_status["items"])
+    by_district = client.get("/api/v1/projects", params={"district": "测试区"}).json()
+    assert any(item["id"] == current["id"] for item in by_district["items"])
+
+    # 有改造项目的公厕删除受保护，force 可级联删除
+    guarded = client.delete(f"/api/v1/restrooms/{restroom['id']}")
+    assert guarded.status_code == 409
+    assert "改造项目" in guarded.json()["detail"]
+    forced = client.delete(f"/api/v1/restrooms/{restroom['id']}", params={"force": "true"})
+    assert forced.status_code == 200
+    assert client.get(f"/api/v1/projects/{current['id']}").status_code == 404
+
+
+def test_renovation_restores_previous_maintenance_status(client, restroom):
+    # 公厕原本是维修中，立项停用、验收后应恢复维修中
+    client.patch(f"/api/v1/restrooms/{restroom['id']}", json={"status": "维修中"})
+    project = client.post("/api/v1/projects", json=_project_payload(restroom["id"])).json()
+    assert project["previous_restroom_status"] == "维修中"
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "暂停使用"
+    for target in ("施工中", "待验收", "已验收"):
+        resp = client.post(
+            f"/api/v1/projects/{project['id']}/transitions",
+            json={"to_status": target, "operator": "林工", "remark": target},
+        )
+        assert resp.status_code == 200, resp.text
+    assert client.get(f"/api/v1/restrooms/{restroom['id']}").json()["status"] == "维修中"

@@ -92,6 +92,13 @@ export default function DashboardPage() {
                 tone="info"
                 foot={`本月完成 ${overview.issue_done_this_month} 条`}
               />
+              <StatCard
+                label="改造中项目"
+                value={overview.renovation_active}
+                unit="个"
+                tone={overview.renovation_active > 0 ? 'warning' : 'primary'}
+                foot={`累计立项 ${overview.renovation_total} 个 · 已验收 ${overview.renovation_accepted} 个`}
+              />
             </div>
 
             <div className="grid-2">

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 
 import { inspectionApi } from '../../api/inspections.js';
 import { issueApi } from '../../api/issues.js';
+import { projectApi } from '../../api/projects.js';
 import { restroomApi } from '../../api/restrooms.js';
 import DataTable from '../../components/DataTable.jsx';
 import DetailList from '../../components/DetailList.jsx';
@@ -18,6 +19,7 @@ const TABS = [
   { key: 'profile', label: '基础档案' },
   { key: 'inspections', label: '巡查记录' },
   { key: 'issues', label: '问题记录' },
+  { key: 'projects', label: '改造项目' },
 ];
 
 export default function RestroomDetailPage() {
@@ -36,6 +38,11 @@ export default function RestroomDetailPage() {
   );
   const issues = useListQuery(
     (params) => issueApi.list({ ...params, restroom_id: restroomId }),
+    {},
+    5,
+  );
+  const projects = useListQuery(
+    (params) => projectApi.list({ ...params, restroom_id: restroomId }),
     {},
     5,
   );
@@ -90,6 +97,14 @@ export default function RestroomDetailPage() {
                   <span className="unit">条</span>
                 </div>
                 <div className="foot">累计上报 {restroom.total_issue_count} 条</div>
+              </div>
+              <div className={`stat-card${restroom.active_renovation_count ? ' is-warning' : ''}`}>
+                <div className="label">改造项目</div>
+                <div className="value">
+                  {restroom.active_renovation_count}
+                  <span className="unit">个进行中</span>
+                </div>
+                <div className="foot">累计立项 {restroom.total_renovation_count} 个</div>
               </div>
             </div>
 
@@ -186,6 +201,36 @@ export default function RestroomDetailPage() {
                   ]}
                 />
                 <Pagination meta={issues.meta} onPageChange={issues.setPage} />
+              </section>
+            ) : null}
+
+            {tab === 'projects' ? (
+              <section className="card">
+                <div className="card-title">
+                  <h3>改造项目</h3>
+                  <Link className="hint" to="/projects">
+                    前往改造项目模块 →
+                  </Link>
+                </div>
+                <DataTable
+                  loading={projects.loading}
+                  error={projects.error}
+                  rows={projects.items}
+                  emptyText="该公厕暂无改造项目"
+                  columns={[
+                    { key: 'code', title: '项目编号' },
+                    {
+                      key: 'reason',
+                      title: '改造事由',
+                      wrap: true,
+                      render: (row) => <Link to={`/projects/${row.id}`}>{row.reason}</Link>,
+                    },
+                    { key: 'construction_unit', title: '施工单位' },
+                    { key: 'status', title: '状态', render: (row) => <StatusTag status={row.status} /> },
+                    { key: 'setup_time', title: '立项时间', render: (row) => formatDateTime(row.setup_time) },
+                  ]}
+                />
+                <Pagination meta={projects.meta} onPageChange={projects.setPage} />
               </section>
             ) : null}
           </>

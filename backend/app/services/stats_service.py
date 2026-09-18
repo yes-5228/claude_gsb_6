@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.core.constants import (
     OPEN_ISSUE_STATUSES,
+    OPEN_RENOVATION_STATUSES,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
+    RenovationStatus,
     RestroomStatus,
 )
-from app.models import Inspection, Issue, Restroom
+from app.models import Inspection, Issue, RenovationProject, Restroom
 from app.schemas.stats import (
     CategoryStat,
     DashboardStats,
@@ -51,6 +53,11 @@ def overview(db: Session) -> OverviewStats:
     closed_count = _count(db, Issue, Issue.status == IssueStatus.CLOSED.value)
     finished = done_count + closed_count
 
+    renovation_total = _count(db, RenovationProject)
+    renovation_active = _count(
+        db, RenovationProject, RenovationProject.status.in_(OPEN_RENOVATION_STATUSES)
+    )
+
     return OverviewStats(
         restroom_total=_count(db, Restroom),
         restroom_open=_count(db, Restroom, Restroom.status == RestroomStatus.NORMAL.value),
@@ -74,6 +81,9 @@ def overview(db: Session) -> OverviewStats:
             db, Issue, Issue.status == IssueStatus.DONE.value, Issue.updated_at >= month_start
         ),
         rectification_rate=round(finished / issue_total * 100, 1) if issue_total else 0.0,
+        renovation_total=renovation_total,
+        renovation_active=renovation_active,
+        renovation_accepted=renovation_total - renovation_active,
     )
 
 

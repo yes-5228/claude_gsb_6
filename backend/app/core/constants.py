@@ -95,5 +95,41 @@ OPEN_ISSUE_STATUSES: list[str] = [
     IssueStatus.REVIEWING,
 ]
 
+
+class RenovationStatus(StrEnum):
+    PENDING = "待施工"
+    PROCESSING = "施工中"
+    REVIEWING = "待验收"
+    ACCEPTED = "已验收"
+
+
+class NodeAcceptance(StrEnum):
+    PASS = "合格"
+    FAIL = "不合格"
+
+
+# 改造项目流转规则：当前状态 -> 允许流转到的状态
+RENOVATION_TRANSITIONS: dict[str, list[str]] = {
+    RenovationStatus.PENDING: [RenovationStatus.PROCESSING],
+    RenovationStatus.PROCESSING: [RenovationStatus.REVIEWING],
+    RenovationStatus.REVIEWING: [RenovationStatus.ACCEPTED, RenovationStatus.PROCESSING],
+    RenovationStatus.ACCEPTED: [],
+}
+
+# 状态流转对应的动作名称，用于生成项目流转流水
+RENOVATION_TRANSITION_ACTIONS: dict[tuple[str, str], str] = {
+    (RenovationStatus.PENDING, RenovationStatus.PROCESSING): "开工施工",
+    (RenovationStatus.PROCESSING, RenovationStatus.REVIEWING): "完工报验",
+    (RenovationStatus.REVIEWING, RenovationStatus.ACCEPTED): "竣工验收通过",
+    (RenovationStatus.REVIEWING, RenovationStatus.PROCESSING): "验收驳回",
+}
+
+# 仍在改造过程中（未完工验收）的项目状态
+OPEN_RENOVATION_STATUSES: list[str] = [
+    RenovationStatus.PENDING,
+    RenovationStatus.PROCESSING,
+    RenovationStatus.REVIEWING,
+]
+
 # 单检查项低于该分数视为不合格项
 INSPECTION_ITEM_PROBLEM_THRESHOLD = 6

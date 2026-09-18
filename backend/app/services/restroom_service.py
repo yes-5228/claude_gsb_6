@@ -5,9 +5,9 @@ from datetime import datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import OPEN_ISSUE_STATUSES
+from app.core.constants import OPEN_ISSUE_STATUSES, OPEN_RENOVATION_STATUSES
 from app.core.exceptions import ConflictError, DomainError, NotFoundError
-from app.models import Inspection, Issue, Restroom
+from app.models import Inspection, Issue, RenovationProject, Restroom
 from app.schemas.restroom import RestroomCreate, RestroomDetail, RestroomOut, RestroomUpdate
 
 SORTABLE_FIELDS = {
@@ -107,10 +107,15 @@ def delete_restroom(db: Session, restroom_id: int, *, force: bool = False) -> No
     issue_count = db.scalar(
         select(func.count()).select_from(Issue).where(Issue.restroom_id == restroom_id)
     ) or 0
-    if (inspection_count or issue_count) and not force:
+    project_count = db.scalar(
+        select(func.count())
+        .select_from(RenovationProject)
+        .where(RenovationProject.restroom_id == restroom_id)
+    ) or 0
+    if (inspection_count or issue_count or project_count) and not force:
         raise ConflictError(
-            f"该公厕已有 {inspection_count} 条巡查记录、{issue_count} 条问题记录，"
-            "确需删除请使用 force=true"
+            f"该公厕已有 {inspection_count} 条巡查记录、{issue_count} 条问题记录、"
+            f"{project_count} 个改造项目，确需删除请使用 force=true"
         )
     db.delete(restroom)
     db.commit()
@@ -138,6 +143,19 @@ def get_restroom_detail(db: Session, restroom_id: int) -> RestroomDetail:
     total_issue_count = db.scalar(
         select(func.count()).select_from(Issue).where(Issue.restroom_id == restroom_id)
     ) or 0
+    total_renovation_count = db.scalar(
+        select(func.count())
+        .select_from(RenovationProject)
+        .where(RenovationProject.restroom_id == restroom_id)
+    ) or 0
+    active_renovation_count = db.scalar(
+        select(func.count())
+        .select_from(RenovationProject)
+        .where(
+            RenovationProject.restroom_id == restroom_id,
+            RenovationProject.status.in_(OPEN_RENOVATION_STATUSES),
+        )
+    ) or 0
 
     base = RestroomOut.model_validate(restroom).model_dump()
     return RestroomDetail(
@@ -148,6 +166,8 @@ def get_restroom_detail(db: Session, restroom_id: int) -> RestroomDetail:
         avg_score=round(float(avg_score), 1) if avg_score is not None else None,
         open_issue_count=open_issue_count,
         total_issue_count=total_issue_count,
+        active_renovation_count=active_renovation_count,
+        total_renovation_count=total_renovation_count,
     )
 
 

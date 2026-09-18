@@ -77,3 +77,5 @@ class RestroomDetail(RestroomOut):
     avg_score: float | None = None
     open_issue_count: int = 0
     total_issue_count: int = 0
+    active_renovation_count: int = 0
+    total_renovation_count: int = 0
